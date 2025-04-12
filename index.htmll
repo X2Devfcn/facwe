@@ -1,0 +1,145 @@
+import http.server
+import socketserver
+from urllib.parse import parse_qs, urlparse
+import os
+
+PORT = 8000
+
+# 데이터 저장소
+announcements = [
+    "🎉 은하카페에 오신 것을 환영합니다!",
+    "📌 새로운 게시글을 작성해보세요!"
+]
+community_posts = [
+    {"title": "Python 공부 시작했어요!", "author": "홍길동", "content": "초보자에게 추천할만한 자료가 있을까요?", "comments": [], "image": None},
+    {"title": "은하카페 너무 멋져요!", "author": "김영희", "content": "디자인이 정말 마음에 들어요!", "comments": [], "image": None},
+]
+
+def render_announcements():
+    return "".join(f"<li>{item}</li>" for item in announcements)
+
+def render_posts():
+    posts_html = ""
+    for post in community_posts:
+        comments_html = "".join(f"<li>{comment}</li>" for comment in post["comments"])
+        image_html = f"<img src='{post['image']}' style='max-width:300px;'>" if post["image"] else ""
+        posts_html += f"""
+        <li>
+            <h3>{post['title']}</h3>
+            <p><strong>작성자:</strong> {post['author']}</p>
+            <p>{post['content']}</p>
+            {image_html}
+            <h4>댓글:</h4>
+            <ul>{comments_html}</ul>
+            <form method="POST" action="/?action=comment&post={post['title']}">
+                <input type="text" name="comment" placeholder="댓글을 입력하세요">
+                <button type="submit">댓글 추가</button>
+            </form>
+        </li>
+        """
+    return posts_html
+
+def save_uploaded_image(file_content, filename):
+    filepath = os.path.join(os.getcwd(), filename)
+    with open(filepath, "wb") as f:
+        f.write(file_content)
+    return filepath
+
+class RequestHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        query = parse_qs(parsed_path.query)
+        page = query.get("page", ["home"])[0]
+
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+
+        if page == "home":
+            content = f"""
+            <h2>공지사항</h2>
+            <ul>{render_announcements()}</ul>
+            <form method="POST" action="/?action=announcement">
+                <input type="text" name="announcement" placeholder="공지 입력">
+                <button type="submit">공지 추가</button>
+            </form>
+            """
+        elif page == "community":
+            content = f"""
+            <h2>커뮤니티 게시판</h2>
+            <ul>{render_posts()}</ul>
+            <h3>글 작성</h3>
+            <form method="POST" action="/?action=post" enctype="multipart/form-data">
+                <input type="text" name="title" placeholder="제목 입력"><br>
+                <input type="text" name="author" placeholder="작성자 입력"><br>
+                <textarea name="content" placeholder="내용 입력"></textarea><br>
+                <input type="file" name="image"><br>
+                <button type="submit">글 작성</button>
+            </form>
+            """
+        else:
+            content = "<p>페이지를 찾을 수 없습니다.</p>"
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <title>은하카페</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; padding: 20px; }}
+                nav a {{ margin: 0 10px; text-decoration: none; color: darkblue; }}
+                nav a:hover {{ text-decoration: underline; }}
+                h1 {{ color: navy; }}
+                ul {{ list-style-type: none; }}
+                form {{ margin-top: 20px; }}
+            </style>
+        </head>
+        <body>
+            <h1>🌌 은하카페 🌌</h1>
+            <nav>
+                <a href="/?page=home">공지사항</a> |
+                <a href="/?page=community">커뮤니티</a>
+            </nav>
+            <hr>
+            {content}
+        </body>
+        </html>
+        """
+        self.wfile.write(html.encode("utf-8"))
+
+    def do_POST(self):
+        parsed_path = urlparse(self.path)
+        query = parse_qs(parsed_path.query)
+        action = query.get("action", [None])[0]
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+
+        if action == "announcement":
+            new_announcement = parse_qs(post_data.decode("utf-8"))["announcement"][0]
+            announcements.append(new_announcement)
+
+        elif action == "post":
+            fields = parse_qs(post_data.decode("utf-8"))
+            title = fields["title"][0]
+            author = fields["author"][0]
+            content = fields["content"][0]
+            community_posts.append({"title": title, "author": author, "content": content, "comments": [], "image": None})
+
+        elif action == "comment":
+            post_title = query.get("post")[0]
+            comment = parse_qs(post_data.decode("utf-8"))["comment"][0]
+            for post in community_posts:
+                if post["title"] == post_title:
+                    post["comments"].append(comment)
+
+        self.send_response(303)
+        self.send_header('Location', '/?page=community')
+        self.end_headers()
+
+# 서버 실행
+if __name__ == "__main__":
+    with socketserver.TCPServer(("127.0.0.1", PORT), RequestHandler) as httpd:
+        print(f"서버가 실행 중입니다! 브라우저에서 http://127.0.0.1:{PORT} 를 열어보세요.")
+        httpd.serve_forever()
